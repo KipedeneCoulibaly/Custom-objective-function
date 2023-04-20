@@ -1,0 +1,97 @@
+---
+title: "Custom Xgboost reg : squared-error"
+author: "kipédène COULIBALY"
+date: "19/04/2023"
+output: pdf_document
+---
+
+## I) Analytical formula
+
+The analytical formula of Mean Squared Error (MSE) is :
+
+$$MSE = \frac{1}{n}\sum_{i=1}^N(Y_i-\hat{Y_i})^2$$  
+
+* **Objective function** :  
+
+$$\begin{aligned}
+f(pred, label) &= \frac{1}{2}(pred-label)^2\\
+Grad &= (pred-label)\\
+Hess &= 1
+\end{aligned}$$
+
+NB: Grad and Hess are vectors.
+
+* **Evaluation metrics** :  
+
+Here we use two evaluation metrics:
+first, the Root Mean Square Error (RMSE) which is simply the square root of the 
+MSE :
+
+$$RMSE = \sqrt{\frac{1}{n}\sum_{i=1}^N(Y_i-\hat{Y_i})^2}$$
+Then for a robust verification we use Mean Absolute Error (MAE) without 
+implementing it (you should be able to do it without any problem) :
+$$MAE = \frac{1}{n}\sum_{i=1}^N|Y_i-\hat{Y_i}|$$ 
+
+## II) Implementation with R
+
+```{r custom squarederror function,fig.align="center",fig.heigh=1,warning=FALSE}
+library(ISLR)
+library(xgboost)
+library(tidyverse)
+library(Metrics)
+
+# Data #
+df = ISLR::Hitters %>% select(Salary, AtBat, Hits, HmRun, Runs, RBI, Walks,
+                              Years, CAtBat, CHits, CHmRun, CRuns, CRBI, CWalks,
+                              PutOuts, Assists, Errors)
+df = df[complete.cases(df),]
+train = df[1:150,]
+test = df[151:nrow(df),]
+
+# XGBoost Matrix
+dtrain <- xgb.DMatrix(data = as.matrix(train[,-1]),label = as.matrix(train[,1]))
+dtest <- xgb.DMatrix(data = as.matrix(test[,-1]),label = as.matrix(test[,1]))
+watchlist <- list(eval = dtest)
+
+# Custom objective function (squared error)
+myobjective <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+  grad <- (preds - labels)    
+  hess <- rep(1, length(labels))                
+  return(list(grad = grad, hess = hess))
+}
+
+# Custom Metric
+evalerror <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+  err <- (preds - labels)^2        
+  return(list(metric = "MyError", value = sqrt(mean(err))))   
+}
+
+# Custom Model
+param1 <- list(booster = 'gbtree', learning_rate = 0.1, objective = myobjective,
+               eval_metric = evalerror, set.seed = 2020)
+
+xgb1 <- xgb.train(params = param1, data = dtrain, nrounds = 500, watchlist, 
+                  maximize = FALSE, early_stopping_rounds = 5)
+
+pred1 = predict(xgb1, dtest)
+mae1 = mae(test$Salary, pred1)
+
+## Normal Model
+param2 <- list(booster = 'gbtree', learning_rate = 0.1, 
+               objective = "reg:squarederror", set.seed = 2020)
+
+xgb2 <- xgb.train(params = param2, data = dtrain, nrounds = 500, watchlist, 
+                  maximize = FALSE, early_stopping_rounds = 5)
+
+pred2 = predict(xgb2, dtest)
+mae2 = mae(test$Salary, pred2)
+
+# comparaison
+print(list(xgb1$evaluation_log$eval_MyError[xgb1$best_iteration], 
+           xgb2$evaluation_log$eval_rmse[xgb2$best_iteration]))
+print(list(mae1, mae2))
+
+```
+

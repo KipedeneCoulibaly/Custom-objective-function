@@ -1,0 +1,94 @@
+---
+title: "Custom Xgboost reg : squared-log-error"
+author: "kipédène COULIBALY"
+date: "19/04/2023"
+output: pdf_document
+---
+## Analytical formula
+
+The analytical formula of Mean Squared Log Error (MSLE) is :
+
+$$MSLE = \frac{1}{n}\sum_{i=1}^N\bigg[log(Y_i+1)-log(\hat{Y_i}+1)\bigg]^2$$  
+
+* **Objective function** :  
+
+$$\begin{aligned}
+f(pred, label) &= \frac{1}{2}\bigg[log(pred+1)-log(label+1)\bigg]^2\\
+Grad &= \frac{1}{(pred+1)}\bigg[log(pred+1)-log(label+1)\bigg]\\
+Hess &= \frac{1}{(pred+1)^2}\bigg[1-log(pred+1)+log(label+1)\bigg]
+\end{aligned}$$
+
+NB: With this function, all input labels are required to be greater than -1.
+
+* **Evaluation metrics** :  
+
+Here we use two evaluation metrics:
+first, the Root Mean Square Log Error (RMSLE) which is simply the square root of the 
+MSLE :
+
+$$RMSLE = \sqrt{\frac{1}{n}\sum_{i=1}^N\bigg[log(Y_i+1)-log(\hat{Y_i}+1)\bigg]^2}$$
+Then for a robust verification we use Mean Absolute Error (MAE) without 
+implementing it (you should be able to do it without any problem) :
+$$MAE = \frac{1}{n}\sum_{i=1}^N|Y_i-\hat{Y_i}|$$ 
+
+## Implementation with R
+
+```{r custom squaredlogerror function,fig.align="center",fig.heigh=1,warning=FALSE}
+library(ISLR)
+library(xgboost)
+library(tidyverse)
+library(Metrics)
+
+# Data #
+df = ISLR::Hitters %>% select(Salary, AtBat, Hits, HmRun, Runs, RBI, Walks,
+                              Years, CAtBat, CHits, CHmRun, CRuns, CRBI, CWalks,
+                              PutOuts, Assists, Errors)
+df = df[complete.cases(df),]
+train = df[1:150,]
+test = df[151:nrow(df),]
+
+# XGBoost Matrix
+dtrain <- xgb.DMatrix(data = as.matrix(train[,-1]),label = as.matrix(train[,1]))
+dtest <- xgb.DMatrix(data = as.matrix(test[,-1]),label = as.matrix(test[,1]))
+watchlist <- list(eval = dtest)
+
+# Custom objective function (squared log error)
+myobjective <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+  grad <- 1/(preds + 1)*(log(preds + 1) - log(labels + 1))    
+  hess <- 1/(preds + 1)^2*(1 - log(preds + 1) + log(labels + 1))                
+  return(list(grad = grad, hess = hess))
+}
+
+# Custom Metric
+evalerror <- function(preds, dtrain) {
+  labels <- getinfo(dtrain, "label")
+  err <- (log(preds + 1) - log(labels + 1))^2        
+  return(list(metric = "MyError", value = sqrt(mean(err))))   
+}
+
+# Custom Model
+param1 <- list(booster = 'gbtree', learning_rate = 0.1, objective = myobjective,
+               eval_metric = evalerror, set.seed = 2020)
+
+xgb1 <- xgb.train(params = param1, data = dtrain, nrounds = 500, watchlist, 
+                  maximize = FALSE, early_stopping_rounds = 5)
+
+pred1 = predict(xgb1, dtest)
+mae1 = mae(test$Salary, pred1)
+
+## Normal Model
+param2 <- list(booster = 'gbtree', learning_rate = 0.1, 
+               objective = "reg:squaredlogerror", set.seed = 2020)
+
+xgb2 <- xgb.train(params = param2, data = dtrain, nrounds = 500, watchlist, 
+                  maximize = FALSE, early_stopping_rounds = 5)
+
+pred2 = predict(xgb2, dtest)
+mae2 = mae(test$Salary, pred2)
+
+# comparaison
+print(list(xgb1$evaluation_log$eval_MyError[xgb1$best_iteration], 
+           xgb2$evaluation_log$eval_rmsle[xgb2$best_iteration]))
+print(list(mae1, mae2))
+```
